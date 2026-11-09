@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foco 15 · cronômetro de estudos</title>
+<meta name="description" content="Cronômetro de estudos: ganhe uma estrela a cada 15 minutos, descanse 10 minutos após 3 estrelas e complete 1 hora.">
+<style>
+:root{
+  --bg:#EEF3EF; --card:#FFFFFF; --ink:#18302C; --muted:#5C7470; --line:#D3E0DB;
+  --study:#0F766E; --rest:#4F46E5; --star:#F5B301; --starOff:#D9E3DF;
+  --font:ui-rounded,"Nunito","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0F1B19; --card:#162624; --ink:#E6F2EE; --muted:#93AAA5; --line:#27403B; --study:#2DD4BF; --rest:#A5B4FC; --starOff:#2A3F3B}
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font:17px/1.5 var(--font);padding:20px}
+:focus-visible{outline:3px solid var(--star);outline-offset:3px;border-radius:8px}
+main{width:100%;max-width:460px}
+h1{font-size:1.1rem;margin:0 0 14px;font-weight:800;letter-spacing:-.01em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px 22px 22px;text-align:center;transition:border-color .3s}
+.card[data-phase="study"]{border-color:var(--study)}
+.card[data-phase="rest"]{border-color:var(--rest)}
+.phase{font-weight:800;font-size:1.05rem;color:var(--muted);min-height:1.6em}
+.card[data-phase="study"] .phase{color:var(--study)}
+.card[data-phase="rest"] .phase{color:var(--rest)}
+.card[data-phase="done"] .phase{color:var(--star)}
+.clock{font-size:clamp(4rem,22vw,5.8rem);font-weight:800;line-height:1.05;margin:4px 0 2px;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.sub{color:var(--muted);min-height:1.5em;margin:0 0 18px}
+.stars{display:flex;justify-content:center;gap:10px;margin:0 0 18px}
+.stars svg{width:46px;height:46px;fill:var(--starOff);transition:fill .25s,transform .25s}
+.stars svg.on{fill:var(--star)}
+.stars svg.pop{animation:pop .5s}
+@keyframes pop{0%{transform:scale(.6)}60%{transform:scale(1.3)}100%{transform:scale(1)}}
+.bar{height:12px;background:var(--starOff);border-radius:99px;overflow:hidden;position:relative}
+.bar i{position:absolute;inset:0 auto 0 0;width:0;background:var(--study);border-radius:99px;transition:width .3s}
+.card[data-phase="rest"] .bar i{background:var(--rest)}
+.ticks{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);margin:6px 2px 20px}
+.btns{display:flex;gap:10px;justify-content:center}
+button{font:800 1.05rem var(--font);border:0;border-radius:14px;padding:14px 26px;cursor:pointer;transition:transform .1s,opacity .15s}
+button:active{transform:scale(.97)}
+#go{background:var(--study);color:#fff;min-width:150px}
+.card[data-phase="rest"] #go{background:var(--rest)}
+@media (prefers-color-scheme:dark){#go{color:#0F1B19}}
+#reset{background:transparent;color:var(--muted);border:1.5px solid var(--line)}
+.opts{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;color:var(--muted);font-size:.92rem}
+label{display:flex;align-items:center;gap:8px;cursor:pointer}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--study)}
+.rules{margin:16px 4px 0;color:var(--muted);font-size:.92rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Foco 15</h1>
+  <section class="card" id="card" data-phase="idle" aria-label="Cronômetro de estudos">
+    <div class="phase" id="phase" role="status" aria-live="polite">Pronto para estudar</div>
+    <div class="clock" id="clock">00:00</div>
+    <p class="sub" id="sub">Meta: 1 hora de estudo</p>
+    <div class="stars" id="stars" role="img" aria-label="0 de 4 estrelas"></div>
+    <div class="bar" role="progressbar" aria-label="Progresso do estudo" aria-valuemin="0" aria-valuemax="60" aria-valuenow="0" id="bar"><i id="fill"></i></div>
+    <div class="ticks"><span>0</span><span>15</span><span>30</span><span>45</span><span>60 min</span></div>
+    <div class="btns">
+      <button id="go" type="button">Iniciar</button>
+      <button id="reset" type="button">Zerar</button>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="demo"> Modo demonstração (30× mais rápido)</label>
+      <label><input type="checkbox" id="sound" checked> Som</label>
+    </div>
+  </section>
+  <p class="rules">A cada 15 minutos de estudo você ganha uma estrela. Com 3 estrelas, são 10 minutos de descanso. Depois, você volta e estuda até completar 1 hora.</p>
+</main>
+
+<script>
+const STAR = 15*60, REST = 10*60, GOAL = 60*60, PAUSE_AT = 3; // segundos
+const $ = id => document.getElementById(id);
+const card=$('card'), phaseEl=$('phase'), clock=$('clock'), sub=$('sub'), starsEl=$('stars'), fill=$('fill'), bar=$('bar'), go=$('go');
+let phase='idle', running=false, studied=0, restLeft=REST, restDone=false, last=0, timer=null, shown=0;
+
+const SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.9 6.1 6.6.9-4.8 4.6 1.2 6.6L12 17.5l-5.9 3.2 1.2-6.6L2.5 9.5l6.6-.9z"/></svg>';
+starsEl.innerHTML = SVG.repeat(4);
+const starEls = [...starsEl.querySelectorAll('svg')];
+
+const mmss = s => { s=Math.max(0,Math.ceil(s)); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); };
+const starsNow = () => Math.min(4, Math.floor(studied/STAR));
+
+function beep(n){
+  if(!$('sound').checked) return;
+  try{
+    const a = beep.ctx || (beep.ctx = new (window.AudioContext||window.webkitAudioContext)());
+    for(let i=0;i<n;i++){
+      const o=a.createOscillator(), g=a.createGain(); o.connect(g); g.connect(a.destination);
+      o.frequency.value=880; const t=a.currentTime+i*0.22;
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.25,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.18);
+      o.start(t); o.stop(t+0.2);
+    }
+  }catch(e){}
+}
+
+function render(){
+  card.dataset.phase = phase;
+  const st = starsNow();
+  starEls.forEach((el,i)=>{
+    const on = i<st; el.classList.toggle('on',on);
+    if(on && i>=shown){ el.classList.remove('pop'); void el.getBoundingClientRect(); el.classList.add('pop'); }
+  });
+  shown = st;
+  starsEl.setAttribute('aria-label', st+' de 4 estrelas');
+  const pct = Math.min(100, studied/GOAL*100);
+  fill.style.width = pct+'%'; bar.setAttribute('aria-valuenow', Math.floor(studied/60));
+  if(phase==='rest'){
+    clock.textContent = mmss(restLeft);
+    sub.textContent = 'Descanse. Faltam '+mmss(GOAL-studied)+' de estudo.';
+    phaseEl.textContent = 'Descanso';
+  } else if(phase==='done'){
+    clock.textContent = '60:00';
+    sub.textContent = '1 hora de estudo concluída. Bom trabalho!';
+    phaseEl.textContent = 'Meta concluída';
+  } else {
+    clock.textContent = mmss(studied);
+    const toNext = (st+1)*STAR - studied;
+    sub.textContent = phase==='idle' ? 'Meta: 1 hora de estudo' : 'Próxima estrela em '+mmss(toNext);
+    phaseEl.textContent = phase==='idle' ? 'Pronto para estudar' : (running ? 'Estudando' : 'Pausado');
+  }
+  go.textContent = phase==='done' ? 'Recomeçar' : (running ? 'Pausar' : (phase==='idle' ? 'Iniciar' : 'Continuar'));
+  document.title = (running||phase!=='idle' ? clock.textContent+' · ' : '')+'Foco 15';
+}
+
+function tick(){
+  const now = performance.now();
+  let dt = (now-last)/1000 * ($('demo').checked ? 30 : 1);
+  last = now;
+  if(phase==='study'){
+    const before = starsNow();
+    studied += dt;
+    if(!restDone && studied >= PAUSE_AT*STAR){          // 3 estrelas: descanso
+      studied = PAUSE_AT*STAR; restDone = true; phase='rest'; restLeft = REST; beep(3);
+    } else if(studied >= GOAL){                          // 1 hora completa
+      studied = GOAL; phase='done'; running=false; stop(); beep(4);
+    } else if(starsNow() > before){ beep(1); }
+  } else if(phase==='rest'){
+    restLeft -= dt;
+    if(restLeft <= 0){ phase='study'; beep(2); }
+  }
+  render();
+}
+function stop(){ clearInterval(timer); timer=null; }
+function start(){ last=performance.now(); timer=setInterval(tick,250); }
+
+go.onclick = () => {
+  if(phase==='done'){ reset(); }
+  if(running){ running=false; stop(); }
+  else { running=true; if(phase==='idle') phase='study'; start(); beep(0); }
+  render();
+};
+function reset(){ stop(); running=false; phase='idle'; studied=0; restLeft=REST; restDone=false; shown=0; render(); }
+$('reset').onclick = reset;
+render();
+</script>
+</body>
+</html>
